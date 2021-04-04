@@ -55,6 +55,8 @@ def parse_args():
     parser.add_argument("--gpus", type=int, default=4, help="number of gpus to use ")
     parser.add_argument("--cpus", type=int, default=8, help="number of cpus to use")
     parser.add_argument("--mem", type=int, default=30, help="amount of memory to use")
+    parser.add_argument(
+        '--disk', type=int, default=150, help='amount of disk to use')
     parser.add_argument("--file", "-f", type=str, help="config txt file")
     parser.add_argument(
         "--name-space",
@@ -88,8 +90,9 @@ def submit(config, args, rest):
         script=script,
         py_args=py_args,
         copy_script=copy_script,
+        ephemeral_storage=args.disk if args.copy else 10,
         link="ln -s /exps/deit/work_dirs; " if args.ln_exp else "",
-    )
+        data_path='dst' if len(copy_script) else 'src')
     with open(args.job, "r") as f:
         config_file = f.read()
     for key, value in template_dict.items():

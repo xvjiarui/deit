@@ -48,7 +48,8 @@ def get_args_parser():
 def main(args):
     utils.init_distributed_mode(args)
 
-    # import wandb
+    if utils.get_rank() == 0:
+        Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
     if utils.get_rank() == 0 and args.wandb:
         import wandb
@@ -348,5 +349,4 @@ if __name__ == '__main__':
     cfg.dist_eval = args.dist_eval
     cfg.wandb = args.wandb
     cfg.freeze()
-    Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     main(cfg)
