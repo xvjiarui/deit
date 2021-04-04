@@ -53,10 +53,10 @@ RUN curl https://rclone.org/install.sh | bash
 RUN ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
 # Get Conda-ified Python.
-RUN echo 'export PATH=/opt/conda/bin:$PATH' > /etc/profile.d/conda.sh && \
-    wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
-    sh ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh
+#RUN echo 'export PATH=/opt/conda/bin:$PATH' > /etc/profile.d/conda.sh && \
+#    wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+#    sh ~/miniconda.sh -b -p /opt/conda && \
+#    rm ~/miniconda.sh
 
 ENV PATH /opt/conda/bin:$PATH
 
