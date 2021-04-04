@@ -48,6 +48,12 @@ def get_args_parser():
 def main(args):
     utils.init_distributed_mode(args)
 
+    if args.get('output_dir', None) is None:
+        # use config filename as default work_dir if cfg.work_dir is None
+        args.output_dir = osp.join('./work_dirs',
+                                  osp.splitext(osp.basename(args.cfg))[0])
+        # append number of process
+        args.output_dir = args.output_dir + f'x{utils.get_world_size()}'
     if utils.get_rank() == 0:
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -339,10 +345,6 @@ if __name__ == '__main__':
     if args.output_dir is not None:
         # update configs according to CLI args if args.output_dir is not None
         cfg.output_dir = args.output_dir
-    elif cfg.get('output_dir', None) is None:
-        # use config filename as default work_dir if cfg.work_dir is None
-        cfg.output_dir = osp.join('./work_dirs',
-                                osp.splitext(osp.basename(args.cfg))[0])
     if args.resume is not None:
         cfg.resume = args.resume
     cfg.eval = args.eval

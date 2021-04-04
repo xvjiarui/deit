@@ -318,7 +318,5 @@ def init_distributed_mode(args):
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
-    # append number of process
-    args.output_dir = args.output_dir + f'x{get_world_size()}'
     setup_for_distributed(args.rank == 0, args.output_dir)
     args.freeze()
