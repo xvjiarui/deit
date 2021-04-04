@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.1-cudnn7-devel
+FROM nvidia/cuda:11.1-cudnn8-devel
 
 WORKDIR /workspace
 
