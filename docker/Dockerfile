@@ -65,8 +65,9 @@ RUN export CUDA_HOME="/usr/local/cuda"
 
 # Install pytorch
 #RUN conda install pytorch torchvision cudatoolkit=11.1 -c pytorch -c conda-forge -y
-RUN conda install -c conda-forge -c iopath -c fvcore fvcore -y
-RUN conda install -c iopath iopath -y
+RUN conda install -c conda-forge yacs
+RUN conda install -c iopath iopath
+RUN conda install -c conda-forge -c iopath -c fvcore fvcore
 
 # Install TIMM
 RUN pip install timm==0.3.2
