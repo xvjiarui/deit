@@ -43,8 +43,6 @@ RUN apt-get update && apt-get install -y \
     libswresample-dev \
     less \
     groff \
-    memcached \
-    s3cmd && \
     ln -s /usr/lib/x86_64-linux-gnu/libGL.so.1 /usr/lib/x86_64-linux-gnu/libGL.so
 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
