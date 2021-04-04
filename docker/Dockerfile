@@ -1,4 +1,5 @@
-FROM nvidia/cuda:11.1-cudnn8-devel
+#FROM nvidia/cuda:11.1-cudnn8-devel
+FROM pytorch/pytorch:1.8.1-cuda11.1-cudnn8-devel
 
 WORKDIR /workspace
 
@@ -63,7 +64,7 @@ ENV PATH /opt/conda/bin:$PATH
 RUN export CUDA_HOME="/usr/local/cuda"
 
 # Install pytorch
-RUN conda install pytorch torchvision cudatoolkit=11.1 -c pytorch -c conda-forge -y
+#RUN conda install pytorch torchvision cudatoolkit=11.1 -c pytorch -c conda-forge -y
 RUN conda install -c conda-forge -c iopath -c fvcore fvcore -y
 
 # Install TIMM
