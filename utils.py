@@ -249,7 +249,7 @@ def setup_for_distributed(is_master, output_dir):
             return
         timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
         log_file = osp.join(output_dir, f'{timestamp}.log')
-        logger = get_logger(name='deit2', log_file=log_file)
+        logger = get_logger(name='deit', log_file=log_file)
         out_str = ''
         for i in args:
             out_str += ' ' + str(i)
@@ -275,9 +275,11 @@ def is_dist_avail_and_initialized():
 
 
 def get_world_size():
-    if not is_dist_avail_and_initialized():
-        return 1
-    return dist.get_world_size()
+    if is_dist_avail_and_initialized():
+        return dist.get_world_size()
+    if 'WORLD_SIZE' in os.environ:
+        return int(os.environ['WORLD_SIZE'])
+    return 1
 
 
 def get_rank():

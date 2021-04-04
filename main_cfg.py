@@ -25,9 +25,10 @@ from datasets import build_dataset
 from engine import train_one_epoch, evaluate
 from losses import DistillationLoss
 from samplers import RASampler
-import models
 import utils
 from deit.config import get_cfg
+from deit.models import build_model
+import models # noqa
 
 
 def get_args_parser():
@@ -46,14 +47,17 @@ def get_args_parser():
 
 
 def main(args):
-    utils.init_distributed_mode(args)
 
     if args.get('output_dir', None) is None:
+        args.defrost()
         # use config filename as default work_dir if cfg.work_dir is None
         args.output_dir = osp.join('./work_dirs',
                                   osp.splitext(osp.basename(args.cfg))[0])
         # append number of process
         args.output_dir = args.output_dir + f'x{utils.get_world_size()}'
+        args.freeze()
+
+    utils.init_distributed_mode(args)
     if utils.get_rank() == 0:
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -80,7 +84,9 @@ def main(args):
 
     cudnn.benchmark = True
 
+    args.defrost()
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
+    args.freeze()
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
     if True:  # args.distributed:
@@ -132,16 +138,20 @@ def main(args):
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
-
-    print(f"Creating model: {args.model}")
-    model = create_model(
-        args.model,
-        pretrained=False,
-        num_classes=args.nb_classes,
-        drop_rate=args.drop,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-    )
+    if args.model:
+        assert not args.model_cfg.type
+        print(f"Creating model: {args.model}")
+        model = create_model(
+            args.model,
+            pretrained=False,
+            num_classes=args.nb_classes,
+            drop_rate=args.drop,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+        )
+    else:
+        print(f"Creating model from cfg")
+        model = build_model(args.model_cfg)
     print(model)
 
     if args.finetune:
@@ -202,7 +212,9 @@ def main(args):
 
     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
     print(f'Learning Rate scaled from {args.lr} to {linear_scaled_lr}')
+    args.defrost()
     args.lr = linear_scaled_lr
+    args.freeze()
     optimizer = create_optimizer(args, model_without_ddp)
     print(optimizer)
     loss_scaler = NativeScaler()
@@ -347,6 +359,7 @@ if __name__ == '__main__':
         cfg.output_dir = args.output_dir
     if args.resume is not None:
         cfg.resume = args.resume
+    cfg.cfg = args.cfg
     cfg.eval = args.eval
     cfg.dist_eval = args.dist_eval
     cfg.wandb = args.wandb
