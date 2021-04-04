@@ -42,8 +42,7 @@ RUN apt-get update && apt-get install -y \
     libavdevice-dev \
     libswresample-dev \
     less \
-    groff \
-    ln -s /usr/lib/x86_64-linux-gnu/libGL.so.1 /usr/lib/x86_64-linux-gnu/libGL.so
+    groff
 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
