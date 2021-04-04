@@ -18,6 +18,7 @@ spec:
         command: ["/bin/sh"] # replace this with your own job execution scripts
         args: ["-c", "rm -rf deit;
         git clone -b {{branch}} https://github.com/xvjiarui/deit.git;
+        cd deit;
         pip install -U wandb;
         mkdir -p /exps/deit/work_dirs; ln -s /exps/deit/pretrained; {{link}}
         {{script}} {{config}} {{gpus}} {{py_args}}"]

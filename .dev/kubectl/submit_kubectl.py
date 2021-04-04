@@ -78,7 +78,7 @@ def submit(config, args, rest):
     if args.copy:
         copy_script += 'mkdir -p /mnt/dest/imagenet; gsutil -m rsync -erCUP /mnt/source/imagenet /mnt/dest/imagenet;' * 2  # noqa
     template_dict = dict(
-        job_name=osp.splitext(osp.basename(config))[0].lower().replace("_", "-") + "-",
+        job_name=osp.splitext(osp.basename(config))[0].lower().replace("_", "-")+f"x{args.gpus}" + "-",
         name_space=args.name_space,
         branch=args.branch,
         gpus=args.gpus,
@@ -90,7 +90,7 @@ def submit(config, args, rest):
         script=script,
         py_args=py_args,
         copy_script=copy_script,
-        ephemeral_storage=args.disk if args.copy else 10,
+        ephemeral_storage=f'{args.disk}Gi' if args.copy else '10Gi',
         link="ln -s /exps/deit/work_dirs; " if args.ln_exp else "",
         data_path='dst' if len(copy_script) else 'src')
     with open(args.job, "r") as f:
