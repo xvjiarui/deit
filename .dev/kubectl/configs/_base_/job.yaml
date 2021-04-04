@@ -1,0 +1,111 @@
+apiVersion: batch/v1
+kind: Job # Deployment will automatically restart when killed. Use Pod if not needed
+metadata:
+  labels:
+    k8s-app: research
+    user: jiarui
+  generateName: '{{job_name}}' # replace <your_name> with something that identifies you
+  namespace: '{{name_space}}'
+spec:
+  ttlSecondsAfterFinished: 172800  # Wait two day to delete completed jobs
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: research
+        image: gitlab-registry.nautilus.optiputer.net/xvjiarui0826/deit:latest
+        imagePullPolicy: Always
+        command: ["/bin/sh"] # replace this with your own job execution scripts
+        args: ["-c", "rm -rf deit;
+        git clone -b {{branch}} https://github.com/xvjiarui/deit.git;
+        pip install -U wandb;
+        mkdir -p /exps/deit/work_dirs; ln -s /exps/deit/pretrained; {{link}}
+        {{script}} {{config}} {{gpus}} {{py_args}}"]
+        resources:
+          requests: # Minimum resources needed for the job
+            memory: "{{mem}}"
+            cpu: "{{ cpus }}"
+            nvidia.com/gpu: "{{ gpus }}"
+            ephemeral-storage: "{{ ephemeral_storage }}"
+          limits: # Maximum resources can be used for the job
+            memory: "{{max_mem}}"
+            cpu: "{{max_cpus}}"
+            nvidia.com/gpu: "{{ gpus }}"
+            ephemeral-storage: "{{ ephemeral_storage }}"
+        volumeMounts:
+          - mountPath: /data # the directory you can access your persistent storage in container
+            name: "{{data_path}}"
+          - mountPath: /exps # the directory you can access your persistent storage in container
+            name: exps
+          - mountPath: /dev/shm # Crucial for multi-gpu or multi processing jobs -> enlarge shared memory
+            name: dshm
+      initContainers:
+        - name: test-cuda
+          image: gitlab-registry.nautilus.optiputer.net/xvjiarui0826/deit:latest
+          imagePullPolicy: Always
+          command: ["/bin/sh"] # replace this with your own job execution scripts
+          args: ["-c", "python -c 'import torch;assert torch.cuda.device_count() > 0'"]
+        - name: init-data
+          image: gitlab-registry.nautilus.optiputer.net/prp/gsutil
+          command: ["/bin/sh"] # replace this with your own job execution scripts
+          args: ["-c", "{{copy_script}} exit 0"]
+          volumeMounts:
+            - name: src
+              mountPath: /mnt/source
+            - name: dst
+              mountPath: /mnt/dest
+      nodeSelector:
+        nautilus.io/disktype: nvme
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: gpu-type
+                    operator: In
+                    values:
+#                      - "1070"
+                      - "1080"
+                      - 1080Ti
+                      - 2080Ti
+                      - titan-xp
+                      - titan-x
+                      - TITANRTX
+                      - A100
+                      - V100
+                      - "3090"
+                      - RTX8000
+#                  - key: kubernetes.io/hostname
+#                    operator: NotIn
+#                    values:
+#                      - k8s-chase-ci-02.calit2.optiputer.net
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 1
+              preference:
+                matchExpressions:
+                  - key: gpu-type
+                    operator: In
+                    values:
+#                      - "1080"
+                      - 1080Ti
+                      - 2080Ti
+                      - V100
+                      - TITANRTX
+                      - A100
+                      - "3090"
+      volumes:
+#        - name: data
+#          persistentVolumeClaim:
+#            claimName: data
+
+        - name: dst
+          emptyDir: {}
+        - name: src
+          persistentVolumeClaim:
+            claimName: data
+        - name: exps
+          persistentVolumeClaim:
+            claimName: exps
+        - name: dshm
+          emptyDir:
+            medium: Memory

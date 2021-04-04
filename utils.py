@@ -13,6 +13,75 @@ import datetime
 
 import torch
 import torch.distributed as dist
+import os.path as osp
+
+import logging
+
+logger_initialized = {}
+
+
+def get_logger(name, log_file=None, log_level=logging.INFO):
+    """Initialize and get a logger by name.
+
+    If the logger has not been initialized, this method will initialize the
+    logger by adding one or two handlers, otherwise the initialized logger will
+    be directly returned. During initialization, a StreamHandler will always be
+    added. If `log_file` is specified and the process rank is 0, a FileHandler
+    will also be added.
+
+    Args:
+        name (str): Logger name.
+        log_file (str | None): The log filename. If specified, a FileHandler
+            will be added to the logger.
+        log_level (int): The logger level. Note that only the process of
+            rank 0 is affected, and other processes will set the level to
+            "Error" thus be silent most of the time.
+
+    Returns:
+        logging.Logger: The expected logger.
+    """
+    logger = logging.getLogger(name)
+    if name in logger_initialized:
+        return logger
+    # handle hierarchical names
+    # e.g., logger "a" is initialized, then logger "a.b" will skip the
+    # initialization since it is a child of "a".
+    for logger_name in logger_initialized:
+        if name.startswith(logger_name):
+            return logger
+
+    stream_handler = logging.StreamHandler()
+    handlers = [stream_handler]
+
+    if dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = 0
+
+    # only rank 0 will add a FileHandler
+    if rank == 0 and log_file is not None:
+        file_handler = logging.FileHandler(log_file, 'w')
+        handlers.append(file_handler)
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        handler.setLevel(log_level)
+        logger.addHandler(handler)
+
+    if rank == 0:
+        logger.setLevel(log_level)
+    else:
+        logger.setLevel(logging.ERROR)
+
+    logger_initialized[name] = True
+
+    # different from MMCV: disable propogation
+    logger.propagate = False
+
+    return logger
+
 
 
 class SmoothedValue(object):
@@ -169,11 +238,24 @@ def _load_checkpoint_for_ema(model_ema, checkpoint):
     model_ema._load_checkpoint(mem_file)
 
 
-def setup_for_distributed(is_master):
+def setup_for_distributed(is_master, output_dir):
     """
     This function disables printing when not in master process
     """
     import builtins as __builtin__
+    def print_log(*args, **kwargs):
+        force = kwargs.pop('force', False)
+        if not is_master and not force:
+            return
+        timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
+        log_file = osp.join(output_dir, f'{timestamp}.log')
+        logger = get_logger(name='deit2', log_file=log_file)
+        out_str = ''
+        for i in args:
+            out_str += ' ' + str(i)
+        logger.info(out_str)
+    __builtin__.print = print_log
+
     builtin_print = __builtin__.print
 
     def print(*args, **kwargs):
@@ -214,6 +296,7 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
+    args.defrost()
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -235,4 +318,5 @@ def init_distributed_mode(args):
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
+    setup_for_distributed(args.rank == 0, args.output_dir)
+    args.freeze()

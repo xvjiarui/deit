@@ -58,6 +58,62 @@ class DistilledVisionTransformer(VisionTransformer):
             # during inference, return the average of both classifier predictions
             return (x + x_dist) / 2
 
+class RecurrentVisionTransformer(VisionTransformer):
+    def __init__(self, *args, recurrence=12, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.recurrence = recurrence
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        for i, blk in enumerate(self.blocks):
+            for r in range(self.recurrence):
+                x = x + self.pos_embed
+                x = self.pos_drop(x)
+                x = blk(x)
+
+        x = self.norm(x)[:, 0]
+        return x
+    
+    def extra_repr(self):
+        return f'recurrence={self.recurrence}'
+
+
+@register_model
+def deit_d1r12_patch16_224(pretrained=False, **kwargs):
+    model = RecurrentVisionTransformer(
+        patch_size=16, embed_dim=192, depth=1, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), recurrence=12, **kwargs)
+    model.default_cfg = _cfg()
+    assert not pretrained
+    return model
+
+@register_model
+def deit_d2r6_patch16_224(pretrained=False, **kwargs):
+    model = RecurrentVisionTransformer(
+        patch_size=16, embed_dim=192, depth=2, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), recurrence=6, **kwargs)
+    model.default_cfg = _cfg()
+    assert not pretrained
+    return model
+
+@register_model
+def deit_d4r3_patch16_224(pretrained=False, **kwargs):
+    model = RecurrentVisionTransformer(
+        patch_size=16, embed_dim=192, depth=4, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), recurrence=3, **kwargs)
+    model.default_cfg = _cfg()
+    assert not pretrained
+    return model
 
 @register_model
 def deit_tiny_patch16_224(pretrained=False, **kwargs):

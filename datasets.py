@@ -55,6 +55,7 @@ class INatDataset(ImageFolder):
 
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
+    print(transform)
 
     if args.data_set == 'CIFAR':
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)

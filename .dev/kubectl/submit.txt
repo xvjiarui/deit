@@ -1,0 +1,1 @@
+deit_tiny_patch16_224_512x8.yaml

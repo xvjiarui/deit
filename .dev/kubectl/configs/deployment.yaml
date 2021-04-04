@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http
+  labels:
+    k8s-app: http
+  namespace: 'self-supervised-video'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: http
+  template:
+    metadata:
+      labels:
+        k8s-app: http
+    spec:
+      containers:
+      - image: gitlab-registry.nautilus.optiputer.net/xvjiarui0826/deit:latest
+        name: http-server
+        command: ["sh", "-c"]
+        args: ["python -m http.server 8000"]
+        # ports:
+        # - containerPort: 8000
+        resources:
+          limits:
+            cpu: 4
+            memory: 4Gi
+#            ephemeral-storage: 200Gi
+          requests:
+            cpu: 2
+            memory: 2G
+#            ephemeral-storage: 200Gi
+        volumeMounts:
+          - mountPath: /data # the directory you can access your persistent storage in container
+            name: data
+          - mountPath: /dev/shm # Crucial for multi-gpu or multi processing jobs -> enlarge shared memory
+            name: dshm
+          - mountPath: /exps # the directory you can access your persistent storage in container
+            name: exps
+          - mountPath: /data_zip # the directory you can access your persistent storage in container
+            name: data-zip
+          - mountPath: /data_backup # the directory you can access your persistent storage in container
+            name: data-backup
+          - mountPath: /exps_backup # the directory you can access your persistent storage in container
+            name: exps-backup
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+        - name: exps
+          persistentVolumeClaim:
+            claimName: exps
+        - name: data-zip
+          persistentVolumeClaim:
+            claimName: data-zip
+        - name: data-backup
+          persistentVolumeClaim:
+            claimName: data-backup
+        - name: exps-backup
+          persistentVolumeClaim:
+            claimName: exps-backup
+        - name: dshm
+          emptyDir:
+            medium: Memory
