@@ -5,6 +5,7 @@ import re
 import tempfile
 from pathlib import Path
 
+WANDB_KEY = '18a953cf069a567c46b1e613f940e6eb8f878c3d'
 
 def scandir(dir_path, suffix=None, recursive=False):
     """Scan a directory to find the interested files.
@@ -55,6 +56,7 @@ def parse_args():
     parser.add_argument("--gpus", type=int, default=4, help="number of gpus to use ")
     parser.add_argument("--cpus", type=int, default=8, help="number of cpus to use")
     parser.add_argument("--mem", type=int, default=30, help="amount of memory to use")
+    parser.add_argument('--wandb', '-w', action='store_true', help='use wandb')
     parser.add_argument(
         '--disk', type=int, default=150, help='amount of disk to use')
     parser.add_argument("--file", "-f", type=str, help="config txt file")
@@ -73,12 +75,16 @@ def parse_args():
 
 def submit(config, args, rest):
     py_args = " ".join(rest)
+    if args.wandb:
+        py_args += " --wandb "
     script = "tools/dist_launch.sh"
     copy_script = ''
+    base_config = osp.splitext(osp.basename(config))[0]
     if args.copy:
         copy_script += 'mkdir -p /mnt/dest/imagenet; gsutil -m rsync -erCUP /mnt/source/imagenet /mnt/dest/imagenet;' * 2  # noqa
     template_dict = dict(
-        job_name=osp.splitext(osp.basename(config))[0].lower().replace("_", "-")+f"x{args.gpus}" + "-",
+        job_name=base_config.lower().replace("_", "-")+f"x{args.gpus}" + "-",
+        base_config=base_config,
         name_space=args.name_space,
         branch=args.branch,
         gpus=args.gpus,
@@ -92,6 +98,8 @@ def submit(config, args, rest):
         copy_script=copy_script,
         ephemeral_storage=f'{args.disk}Gi' if args.copy else '10Gi',
         link="ln -s /exps/deit/work_dirs; " if args.ln_exp else "",
+        wandb='pip install --upgrade wandb && wandb login '
+              f'{WANDB_KEY} ;' if args.wandb else '',
         data_path='dst' if len(copy_script) else 'src')
     with open(args.job, "r") as f:
         config_file = f.read()

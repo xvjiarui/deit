@@ -259,12 +259,10 @@ def main(args):
         criterion, teacher_model, args.distillation_type, args.distillation_alpha, args.distillation_tau
     )
 
-    output_dir = Path(args.output_dir)
-    start_epoch = args.start_epoch
-    resume = args.resume
-    if args.auto_resume and osp.exists(output_dir/'checkpoint.pth'):
-        resume = osp.exists(output_dir/'checkpoint.pth')
-    if resume:
+    args.defrost()
+    if args.auto_resume and osp.exists(osp.join(args.output_dir, 'checkpoint.pth')):
+        args.resume = osp.join(args.output_dir, 'checkpoint.pth')
+    if args.resume:
         print(f'Resume from {args.resume}')
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -275,11 +273,12 @@ def main(args):
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            start_epoch = checkpoint['epoch'] + 1
+            args.start_epoch = checkpoint['epoch'] + 1
             if args.model_ema:
                 utils._load_checkpoint_for_ema(model_ema, checkpoint['model_ema'])
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
+    args.freeze()
 
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device)
@@ -289,7 +288,7 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_accuracy = 0.0
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 

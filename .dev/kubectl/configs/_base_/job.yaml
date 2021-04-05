@@ -9,6 +9,9 @@ metadata:
 spec:
   ttlSecondsAfterFinished: 172800  # Wait two day to delete completed jobs
   template:
+    metadata:
+      labels:
+        config: '{{base_config}}'
     spec:
       restartPolicy: Never
       containers:
@@ -19,8 +22,10 @@ spec:
         args: ["-c", "rm -rf deit;
         git clone -b {{branch}} https://github.com/xvjiarui/deit.git;
         cd deit;
-        pip install -U wandb;
-        mkdir -p /exps/deit/work_dirs; ln -s /exps/deit/pretrained; {{link}}
+        ln -s /data;
+        {{wandb}}
+        mkdir -p /exps/deit/work_dirs; ln -s /exps/deit/pretrained;
+        {{link}}
         {{script}} {{config}} {{gpus}} {{py_args}}"]
         resources:
           requests: # Minimum resources needed for the job
