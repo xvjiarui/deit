@@ -79,8 +79,6 @@ class RecurrentVisionTransformer(VisionTransformer):
         for out_r in range(self.outer_recurrence):
             for i, blk in enumerate(self.blocks):
                 for r in range(self.recurrence):
-                    x = x + self.pos_embed
-                    x = self.pos_drop(x)
                     x = blk(x)
 
         x = self.norm(x)[:, 0]
