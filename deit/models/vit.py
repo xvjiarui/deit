@@ -356,10 +356,12 @@ class RecurrentVisionTransformer(VisionTransformer):
 class PEG(nn.Module):
     def __init__(self, dim, k=3, with_gap=True):
         super(PEG, self).__init__()
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.proj = nn.Conv2d(dim, dim, kernel_size=k, stride=1, padding=k//2, groups=dim)
         self.with_gap = with_gap
 
     def forward(self, x, img_shape):
+        x = self.norm(x)
         batch, length, channels = x.shape
         if self.with_gap:
             img_view = x
