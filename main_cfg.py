@@ -301,6 +301,7 @@ def main(args):
 
         lr_scheduler.step(epoch)
         if args.output_dir:
+            output_dir = Path(args.output_dir)
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             if (epoch+1) % args.save_interval:
                 checkpoint_paths.append(output_dir / f'epoch_{epoch}.pth')
