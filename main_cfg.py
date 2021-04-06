@@ -303,7 +303,7 @@ def main(args):
         if args.output_dir:
             output_dir = Path(args.output_dir)
             checkpoint_paths = [output_dir / 'checkpoint.pth']
-            if (epoch+1) % args.save_interval:
+            if (epoch+1) % args.save_interval == 0:
                 checkpoint_paths.append(output_dir / f'epoch_{epoch}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
