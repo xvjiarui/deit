@@ -64,10 +64,11 @@ def main(args):
     if utils.get_rank() == 0 and args.wandb:
         import wandb
         Path(args.output_dir, 'wandb').mkdir(parents=True, exist_ok=True)
-        wandb.init(project='deit', name=args.output_dir, dir=f'{args.output_dir}', config=args)
+        wandb.init(project='deit', name=osp.basename(args.output_dir),
+                   dir=f'{args.output_dir}', config=args)
     else:
         wandb = None
-    
+
     print(' '.join(sys.argv))
     print(pprint.pformat(args))
 
