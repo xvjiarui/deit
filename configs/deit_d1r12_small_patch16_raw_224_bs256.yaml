@@ -1,7 +1,7 @@
 VERSION: 2
 #model: deit_tiny_patch16_224
 model_cfg:
-  type: VisionTransformer
+  type: RecurrentVisionTransformer
   kwargs:
     patch_size: 16
     embed_dim: 384
