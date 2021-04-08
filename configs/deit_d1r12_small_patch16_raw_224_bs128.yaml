@@ -13,7 +13,7 @@ model_cfg:
     num_classes: 1000
     drop_rate: 0.
     drop_path_rate: 0.1
-batch_size: 256
+batch_size: 128
 aa: ''
 mixup: 0.
 cutmix: 0.
