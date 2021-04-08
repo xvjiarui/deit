@@ -1,0 +1,18 @@
+VERSION: 2
+model_cfg:
+  type: RecurrentDistilledVisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 192
+    depth: 1
+    num_heads: 3
+    inner_recurrence: 12
+    outer_recurrence: 1
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 256
+teacher_model: deit_small_patch16_224
+teacher_path: pretrained/deit_small_patch16_224-cd65a155.pth
+distillation_type: hard

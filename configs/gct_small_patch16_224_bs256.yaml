@@ -1,0 +1,15 @@
+VERSION: 2
+#model: deit_tiny_patch16_224
+model_cfg:
+  type: GlobalContextTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 384
+    depth: 12
+    num_heads: 6
+    qk_dim: 24
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 256

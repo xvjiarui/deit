@@ -1,1 +1,8 @@
-deit_tiny_patch16_224_bs256.yaml
+#deit_tiny_patch16_224_bs256.yaml
+#deit_tiny_patch16_raw_224_bs256.yaml
+#deit_d1r12_dst_patch16_224_bs256.yaml
+#deit_d1r12_dstb_patch16_224_bs256.yaml
+#deit_d1r12_dsts_patch16_224_bs256.yaml
+#deit_small_patch16_224_bs128.yaml
+#deit_small_patch16_raw_224_bs128.yaml
+#deit_d1r12_small_patch16_224_bs128.yaml

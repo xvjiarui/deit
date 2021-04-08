@@ -42,6 +42,8 @@ def get_args_parser():
     parser.add_argument('--dist-eval', action='store_true', default=False, help='Enabling distributed evaluation')
 
     parser.add_argument('--wandb', default=False, action='store_true', help='Use WandB to log experiments')
+    parser.add_argument('-j', '--num-workers', default=10, type=int, metavar='N',
+                        help='number of data loading workers (default: 10)')
 
     return parser
 
@@ -65,7 +67,7 @@ def main(args):
         import wandb
         Path(args.output_dir, 'wandb').mkdir(parents=True, exist_ok=True)
         wandb.init(project='deit', name=osp.basename(args.output_dir),
-                   dir=f'{args.output_dir}', config=args)
+                   dir=f'{args.output_dir}', config=args, resume=True)
     else:
         wandb = None
 
@@ -243,7 +245,7 @@ def main(args):
             args.teacher_model,
             pretrained=False,
             num_classes=args.nb_classes,
-            global_pool='avg',
+            # global_pool='avg',
         )
         if args.teacher_path.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -364,5 +366,6 @@ if __name__ == '__main__':
     cfg.eval = args.eval
     cfg.dist_eval = args.dist_eval
     cfg.wandb = args.wandb
+    cfg.num_workers = args.num_workers
     cfg.freeze()
     main(cfg)

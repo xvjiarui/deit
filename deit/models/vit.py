@@ -339,7 +339,41 @@ class RecurrentVisionTransformer(VisionTransformer):
         return x
 
     def extra_repr(self):
-        return f'inner_recurrence={self.inner_recurrence}, outer_recurrence={self.outer_recurrence}'
+        return f'inner_recurrence={self.inner_recurrence}, \n' \
+               f'outer_recurrence={self.outer_recurrence}'
+
+@BACKBONE_REGISTRY.register()
+class RecurrentDistilledVisionTransformer(DistilledVisionTransformer):
+    def __init__(self, *args, inner_recurrence=1, outer_recurrence=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.inner_recurrence = inner_recurrence
+        self.outer_recurrence = outer_recurrence
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1,
+                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
+        dist_token = self.dist_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, dist_token, x), dim=1)
+
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        for out_r in range(self.outer_recurrence):
+            for i, blk in enumerate(self.blocks):
+                for r in range(self.inner_recurrence):
+                    x = blk(x)
+
+        x = self.norm(x)
+        return x[:, 0], x[:, 1]
+
+    def extra_repr(self):
+        return f'inner_recurrence={self.inner_recurrence}, \n' \
+               f'outer_recurrence={self.outer_recurrence}'
 
 class PEG(nn.Module):
     def __init__(self, dim, k=3, with_gap=True):
@@ -412,3 +446,56 @@ class CPVT(RecurrentVisionTransformer):
             x = self.norm(x)
             return x[:, 0]
 
+@BACKBONE_REGISTRY.register()
+class DenseRecurrentVisionTransformer(VisionTransformer):
+    def __init__(self, *args, inner_recurrence=1, outer_recurrence=1, out_indices=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.inner_recurrence = inner_recurrence
+        self.outer_recurrence = outer_recurrence
+        if out_indices is None:
+            out_indices = (outer_recurrence - 1,)
+        if isinstance(out_indices, str):
+            assert out_indices == 'all'
+            out_indices = tuple(i for i in range(outer_recurrence))
+        self.out_indices = out_indices
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1,
+                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        outs = []
+        for out_r in range(self.outer_recurrence):
+            for i, blk in enumerate(self.blocks):
+                for r in range(self.inner_recurrence):
+                    x = blk(x)
+            if out_r in self.out_indices:
+                outs.append(x)
+
+        return tuple(outs)
+
+    def forward_head(self, x):
+        x = self.norm(x)[:, 0]
+        x = self.head(x)
+        return x
+
+    def forward(self, x):
+        x = self.forward_features(x)
+        assert isinstance(x, tuple) and len(x) == len(self.out_indices)
+        probs = self.forward_head(x[0]).softmax(dim=1)
+        for i in range(1, len(x)):
+            probs = probs + self.forward_head(x[i]).softmax(dim=1)
+        return probs.log()
+
+    def extra_repr(self):
+        return f'inner_recurrence={self.inner_recurrence}, \n' \
+               f'outer_recurrence={self.outer_recurrence}, \n' \
+               f'out_indices={self.out_indices}'

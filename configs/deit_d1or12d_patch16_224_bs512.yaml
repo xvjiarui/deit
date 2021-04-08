@@ -1,0 +1,16 @@
+VERSION: 2
+model_cfg:
+  type: DenseRecurrentVisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 192
+    depth: 1
+    num_heads: 3
+    inner_recurrence: 1
+    outer_recurrence: 12
+    out_indices: all
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 512
