@@ -5,7 +5,7 @@ model_cfg:
   kwargs:
     patch_size: 16
     embed_dim: 384
-    depth: 12
+    depth: 1
     inner_recurrence: 12
     outer_recurrence: 1
     num_heads: 6
