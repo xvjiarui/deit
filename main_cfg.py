@@ -28,6 +28,7 @@ from samplers import RASampler
 import utils
 from deit.config import get_cfg
 from deit.models import build_model
+from deit.utils import collect_env, get_git_hash
 import models # noqa
 
 
@@ -71,6 +72,15 @@ def main(args):
     else:
         wandb = None
 
+    # log env info
+    env_info_dict = collect_env()
+    env_info = '\n'.join([f'{k}: {v}' for k, v in env_info_dict.items()])
+    dash_line = '-' * 60 + '\n'
+    print('Environment info:\n' + dash_line + env_info + '\n' + dash_line)
+
+    print(f'Git hash: {get_git_hash(digits=7)}')
+
+    # log command
     print(' '.join(sys.argv))
     print(pprint.pformat(args))
 

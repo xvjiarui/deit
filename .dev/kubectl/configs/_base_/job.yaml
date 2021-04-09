@@ -71,7 +71,7 @@ spec:
                     operator: In
                     values:
 #                      - "1070"
-                      - "1080"
+#                      - "1080"
                       - 1080Ti
                       - 2080Ti
                       - titan-xp
