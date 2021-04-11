@@ -1,0 +1,14 @@
+VERSION: 2
+model_cfg:
+  type: DepthRecurrentVisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 192
+    depth: 3
+    num_heads: 3
+    recurrences: 1,10,1
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 256

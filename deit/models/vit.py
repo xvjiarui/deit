@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as cp
 from functools import partial
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
@@ -499,3 +500,35 @@ class DenseRecurrentVisionTransformer(VisionTransformer):
         return f'inner_recurrence={self.inner_recurrence}, \n' \
                f'outer_recurrence={self.outer_recurrence}, \n' \
                f'out_indices={self.out_indices}'
+
+@BACKBONE_REGISTRY.register()
+class DepthRecurrentVisionTransformer(VisionTransformer):
+    def __init__(self, *args, recurrences=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if recurrences is None:
+            recurrences = tuple(1 for _ in range(len(self.blocks)))
+        assert isinstance(recurrences, tuple) and len(recurrences) == len(self.blocks)
+        self.recurrences = recurrences
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1,
+                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        for i, blk in enumerate(self.blocks):
+            for r in range(self.recurrences[i]):
+                x = blk(x)
+
+        x = self.norm(x)[:, 0]
+        return x
+
+    def extra_repr(self):
+        return f'recurrences={self.recurrences}'
