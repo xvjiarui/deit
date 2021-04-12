@@ -1,0 +1,16 @@
+VERSION: 2
+model_cfg:
+  type: EmbedRecurrentVisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 384
+    depth: 1
+    num_heads: 6
+    recurrence: 12
+    pos_embed_each_recur: true
+    step_embed: true
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 128

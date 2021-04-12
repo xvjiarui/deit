@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -173,6 +174,7 @@ class _VisionTransformer(nn.Module):
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.patch_size = patch_size
+        self.drop_rate = drop_rate
 
         if hybrid_backbone is not None:
             self.patch_embed = HybridEmbed(
@@ -532,3 +534,149 @@ class DepthRecurrentVisionTransformer(VisionTransformer):
 
     def extra_repr(self):
         return f'recurrences={self.recurrences}'
+
+def pos_embed(x):
+    batch, length, channels = x.shape
+
+    pe = torch.zeros(length, channels, dtype=x.dtype, device=x.device)
+    position = torch.arange(0, length, dtype=x.dtype, device=x.device).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, channels, 2).float() * (-math.log(10000.0) / channels))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    pe = pe.unsqueeze(0)
+    return pe
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, embed_dim, max_len=197, dropout=0.1):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.embed_dim = embed_dim
+        self.max_len = max_len
+
+        pe = torch.zeros(max_len, embed_dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-math.log(10000.0) / embed_dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        # [1, max_len, embed_dim]
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe
+        return self.dropout(x)
+
+    def extra_repr(self) -> str:
+        return f'embed_dim={self.embed_dim}, max_len={self.max_len}'
+
+class StepEncoding(nn.Module):
+
+    def __init__(self, embed_dim, max_len=12, dropout=0.1):
+        super(StepEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.embed_dim = embed_dim
+        self.max_len = max_len
+
+        pe = torch.zeros(max_len, embed_dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-math.log(10000.0) / embed_dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        # [1, max_len, embed_dim]
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x, step):
+        x = x + self.pe[:, step:step+1]
+        return self.dropout(x)
+
+    def extra_repr(self) -> str:
+        return f'embed_dim={self.embed_dim}, max_len={self.max_len}'
+
+@BACKBONE_REGISTRY.register()
+class EmbedRecurrentVisionTransformer(VisionTransformer):
+    def __init__(self, *args, recurrence=12, pos_embed_each_recur=False,
+                 step_embed=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.recurrence = recurrence
+        self.pos_embed_each_recur = pos_embed_each_recur
+        if step_embed:
+            self.step_embed = nn.Parameter(
+                torch.zeros(1, recurrence, self.embed_dim))
+        else:
+            self.step_embed = None
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1,
+                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        for i, blk in enumerate(self.blocks):
+            for r in range(self.recurrence):
+                # embed first or each layer
+                if (i == 0 and r == 0) or self.pos_embed_each_recur:
+                    x = x + self.pos_embed
+                    x = self.pos_drop(x)
+                if self.step_embed is not None:
+                    x = x + self.step_embed[:, r:r+1]
+                x = blk(x)
+
+        x = self.norm(x)[:, 0]
+        return x
+
+    def extra_repr(self):
+        return f'recurrence={self.recurrence}, \n' \
+               f'pos_embed_each_recur={self.pos_embed_each_recur}, \n' \
+               f'step_embed={self.step_embed is not None}'
+
+@BACKBONE_REGISTRY.register()
+class FixEmbedRecurrentVisionTransformer(VisionTransformer):
+    def __init__(self, *args, recurrence=12, pos_embed_each_recur=False,
+                 step_embed=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.recurrence = recurrence
+        self.pos_embed_each_recur = pos_embed_each_recur
+        delattr(self, 'pos_embed')
+        self.pos_embed = PositionalEncoding(self.embed_dim, self.patch_embed.num_patches+1, dropout=self.drop_rate)
+        if step_embed:
+            self.step_embed = StepEncoding(self.embed_dim, recurrence, dropout=self.drop_rate)
+        else:
+            self.step_embed = nn.Identity()
+
+    def forward_features(self, x):
+        # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+        # with slight modifications to add the dist_token
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1,
+                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        x = self.pos_embed(x)
+
+        for i, blk in enumerate(self.blocks):
+            for r in range(self.recurrence):
+                # embed first or each layer
+                if (i == 0 and r == 0) or self.pos_embed_each_recur:
+                    x = self.pos_embed(x)
+                if self.step_embed is not None:
+                    x = self.step_embed(x, step=r)
+                x = blk(x)
+
+        x = self.norm(x)[:, 0]
+        return x
+
+    def extra_repr(self):
+        return f'recurrence={self.recurrence}, \n' \
+               f'pos_embed_each_recur={self.pos_embed_each_recur}'
