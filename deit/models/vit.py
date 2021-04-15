@@ -263,7 +263,10 @@ class VisionTransformer(_VisionTransformer):
                  norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs):
         super(VisionTransformer, self).__init__(*args, qkv_bias=qkv_bias,
                                                 norm_layer=norm_layer, **kwargs)
-        assert not pretrained
+        if pretrained:
+            print(f'Load pretrained weight from {pretrained}')
+            checkpoint = torch.load(pretrained, map_location='cpu')
+            self.load_state_dict(checkpoint["model"])
         self.default_cfg = _cfg()
 
 
