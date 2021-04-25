@@ -1,0 +1,21 @@
+VERSION: 2
+#model: deit_tiny_patch16_224
+model_cfg:
+  type: RecurrentVisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 768
+    depth: 1
+    inner_recurrence: 12
+    outer_recurrence: 1
+    num_heads: 12
+    pretrained: work_dirs/deit_d1r12_base_patch16_224_bs128x4/checkpoint.pth
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 128
+aa: ''
+mixup: 0.
+cutmix: 0.
+repeated_aug: false
+reprob: 0.
