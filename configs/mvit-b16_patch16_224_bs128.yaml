@@ -1,0 +1,9 @@
+VERSION: 2
+model_cfg:
+  type: MultiscaleVisionTransformer
+  kwargs:
+    base_dim: 96
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 128
