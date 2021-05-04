@@ -1,0 +1,11 @@
+VERSION: 2
+model_cfg:
+  type: RecurrentMultiscaleVisionTransformer
+  kwargs:
+    base_dim: 384
+    num_classes: 1000
+    drop_rate: 0.
+    stem_stride: 8
+    stages: 3,7,6
+    base_stride: 4
+batch_size: 128
