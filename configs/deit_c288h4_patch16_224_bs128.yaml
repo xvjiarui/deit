@@ -1,0 +1,14 @@
+VERSION: 2
+#model: deit_tiny_patch16_224
+model_cfg:
+  type: VisionTransformer
+  kwargs:
+    patch_size: 16
+    embed_dim: 288
+    depth: 12
+    num_heads: 4
+    pretrained: false
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+batch_size: 256
