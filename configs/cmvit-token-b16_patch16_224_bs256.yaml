@@ -1,0 +1,11 @@
+VERSION: 2
+model_cfg:
+  type: ClusterMultiscaleVisionTransformer
+  kwargs:
+    base_dim: 96
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+#    pool_type: token
+    pool_type: token
+batch_size: 256
