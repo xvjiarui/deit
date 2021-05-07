@@ -355,6 +355,8 @@ class Stage(nn.Module):
                           out_dim=out_dim if blk_idx == num_blocks - 1 else None)
             stage_blocks.append(block)
         self.blocks = nn.ModuleList(stage_blocks)
+        trunc_normal_(self.cluster_token, std=.02)
+        trunc_normal_(self.pos_embed, std=.02)
 
     def forward(self, x, width):
         cluster_token = self.cluster_token + self.pos_embed
