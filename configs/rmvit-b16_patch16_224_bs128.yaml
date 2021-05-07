@@ -1,0 +1,8 @@
+VERSION: 2
+model_cfg:
+  type: RecurrentMultiscaleVisionTransformer
+  kwargs:
+    base_dim: 192
+    num_classes: 1000
+    drop_rate: 0.
+batch_size: 128
