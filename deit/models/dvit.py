@@ -6,6 +6,7 @@ import torch.utils.checkpoint as cp
 from functools import partial
 import numpy as np
 from einops import rearrange, reduce, repeat
+import torch.utils.checkpoint as cp
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import trunc_normal_, DropPath, to_2tuple
@@ -80,7 +81,7 @@ class Attention(nn.Module):
 
         # [B, nh, N, C//nh] -> [B, N, C]
         # out = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        out = rearrange(attn @ v, 'b h n c -> b n (h c)', h=self.num_heads, b=B, c=C//self.num_heads)
+        out = rearrange(attn @ v, 'b h n c -> b n (h c)', h=self.num_heads, b=B, n=N, c=C//self.num_heads)
         out = self.proj(out)
         out = self.proj_drop(out)
         if return_attn:
@@ -144,6 +145,7 @@ class CrossAttnBlock(nn.Module):
                                            nn.Linear(dim, out_dim, bias=False))
         else:
             self.reduction = nn.Identity()
+        # self.with_cp = True
 
     def forward(self, query, key, *, return_attn=False):
         x = query
@@ -157,6 +159,30 @@ class CrossAttnBlock(nn.Module):
             return x, attn
         else:
             return x
+
+    # def forward(self, query, key, *, return_attn=False):
+    #
+    #     def _inner_forward(query, key):
+    #         x = query
+    #         if return_attn:
+    #             out, attn = self.attn(self.norm_q(query), key=self.norm_k(key),
+    #                                   return_attn=return_attn)
+    #         else:
+    #             out = self.attn(self.norm_q(query), key=self.norm_k(key),
+    #                             return_attn=return_attn)
+    #         x = x + self.drop_path(out)
+    #         x = self.reduction(x) + self.drop_path(self.mlp(self.norm2(x)))
+    #         if return_attn:
+    #             return x, attn
+    #         else:
+    #             return x
+    #
+    #     if self.with_cp and query.requires_grad:
+    #         out = cp.checkpoint(_inner_forward, query, key)
+    #     else:
+    #         out = _inner_forward(query, key)
+    #
+    #     return out
 
 
 class AttnStage(nn.Module):
@@ -178,7 +204,8 @@ class AttnStage(nn.Module):
                     qk_scale=qk_scale, drop=drop_rate,
                     attn_drop=attn_drop_rate,
                     drop_path=drop_path[blk_idx],
-                    norm_layer=norm_layer))
+                    norm_layer=norm_layer,
+                    with_mlp=False))
             input_attn_blocks.append(
                 CrossAttnBlock(
                     dim=dim, num_heads=num_heads,
@@ -218,6 +245,10 @@ class AttnStage(nn.Module):
             assert isinstance(input_attn, CrossAttnBlock)
             cluster_token = cluster_attn(cluster_token)
             output_token = input_attn(output_token, cluster_token)
+
+        # for input_attn in self.input_attn_blocks:
+        #     assert isinstance(input_attn, CrossAttnBlock)
+        #     output_token = input_attn(output_token, output_token)
 
         # print(f'after cluster: {output_token.shape}')
 
@@ -275,6 +306,13 @@ class TokenVisionTransformer(nn.Module):
         self.patch_embed = PatchEmbed(
             img_size=img_size, in_chans=in_chans,
             embed_dim=base_dim)
+        # strides = (1, )
+        # base_dim = 384
+        # self.stage_dims = (base_dim, )
+        # stage_blocks = (12,)
+        # self.patch_embed = PatchEmbed(
+        #     img_size=img_size, in_chans=in_chans,
+        #     embed_dim=base_dim, kernel_size=16, stride=16, padding=0)
         num_patches = self.patch_embed.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, base_dim))
