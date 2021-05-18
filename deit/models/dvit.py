@@ -92,7 +92,8 @@ class SelfAttnBlock(nn.Module):
 
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False,
                  qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, out_dim=None):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 out_dim=None, with_mlp=True):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
@@ -101,19 +102,22 @@ class SelfAttnBlock(nn.Module):
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
-                       act_layer=act_layer, drop=drop, out_features=out_dim)
-        if out_dim is not None and dim != out_dim:
-            self.reduction = nn.Sequential(norm_layer(dim),
-                                           nn.Linear(dim, out_dim, bias=False))
-        else:
-            self.reduction = nn.Identity()
+        self.with_mlp = with_mlp
+        if self.with_mlp:
+            self.norm2 = norm_layer(dim)
+            mlp_hidden_dim = int(dim * mlp_ratio)
+            self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                           act_layer=act_layer, drop=drop, out_features=out_dim)
+            if out_dim is not None and dim != out_dim:
+                self.reduction = nn.Sequential(norm_layer(dim),
+                                               nn.Linear(dim, out_dim, bias=False))
+            else:
+                self.reduction = nn.Identity()
 
     def forward(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
-        x = self.reduction(x) + self.drop_path(self.mlp(self.norm2(x)))
+        if self.with_mlp:
+            x = self.reduction(x) + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 class CrossAttnBlock(nn.Module):
@@ -193,16 +197,9 @@ class AttnStage(nn.Module):
         input_token = x
         cluster_token = self.cluster_token.expand(x.size(0), -1, -1)
 
-        for cluster_attn, input_attn in zip(self.cluster_attn_blocks,
-                                            self.input_attn_blocks):
-            assert isinstance(cluster_attn, SelfAttnBlock)
-            assert isinstance(input_attn, CrossAttnBlock)
-            cluster_token = cluster_attn(cluster_token)
-            input_token = input_attn(input_token, cluster_token)
-
         cls_token = input_token[:, 0].unsqueeze(1)
-        output_token = rearrange(input_token[:, 1:], 'b (h w) c -> b c h w', h=H, w=W,
-                                 b=B)
+        output_token = rearrange(input_token[:, 1:], 'b (h w) c -> b c h w',
+                                 h=H, w=W, b=B)
 
         if self.downsample is not None:
             output_token = self.downsample(output_token)
@@ -210,6 +207,13 @@ class AttnStage(nn.Module):
         output_shape = output_token.shape
         output_token = rearrange(output_token, 'b c h w -> b (h w) c')
         output_token = torch.cat((cls_token, output_token), dim=1)
+
+        for cluster_attn, input_attn in zip(self.cluster_attn_blocks,
+                                            self.input_attn_blocks):
+            assert isinstance(cluster_attn, SelfAttnBlock)
+            assert isinstance(input_attn, CrossAttnBlock)
+            cluster_token = cluster_attn(cluster_token)
+            output_token = input_attn(output_token, cluster_token)
 
         return output_token, output_shape
 
@@ -289,8 +293,8 @@ class TokenVisionTransformer(nn.Module):
                 if pool_type == 'max':
                     downsample = nn.MaxPool2d(kernel_size=2, stride=2)
                 else:
-                    downsample = nn.Conv2d(in_channels=out_dim if out_dim is not None else stage_dim,
-                                           out_channels=out_dim if out_dim is not None else stage_dim,
+                    downsample = nn.Conv2d(in_channels=stage_dim,
+                                           out_channels=stage_dim,
                                            kernel_size=(2, 2), stride=(2, 2))
             else:
                 downsample=None
