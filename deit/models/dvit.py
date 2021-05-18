@@ -79,7 +79,8 @@ class Attention(nn.Module):
         assert attn.shape == (B, self.num_heads, N, S)
 
         # [B, nh, N, C//nh] -> [B, N, C]
-        out = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        # out = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        out = rearrange(attn @ v, 'b h n c -> b n (h c)', h=self.num_heads, b=B, c=C//self.num_heads)
         out = self.proj(out)
         out = self.proj_drop(out)
         if return_attn:
@@ -193,6 +194,7 @@ class AttnStage(nn.Module):
         self.downsample = downsample
 
     def forward(self, x, x_shape):
+        # print(f'input: {x.shape}, {x_shape}')
         B, _, H, W = x_shape
         input_token = x
         cluster_token = self.cluster_token.expand(x.size(0), -1, -1)
@@ -203,10 +205,12 @@ class AttnStage(nn.Module):
 
         if self.downsample is not None:
             output_token = self.downsample(output_token)
+        # print(f'downsample: {output_token.shape}')
 
         output_shape = output_token.shape
         output_token = rearrange(output_token, 'b c h w -> b (h w) c')
         output_token = torch.cat((cls_token, output_token), dim=1)
+        # print(f'before cluster: {output_token.shape}, {output_shape}')
 
         for cluster_attn, input_attn in zip(self.cluster_attn_blocks,
                                             self.input_attn_blocks):
@@ -214,6 +218,8 @@ class AttnStage(nn.Module):
             assert isinstance(input_attn, CrossAttnBlock)
             cluster_token = cluster_attn(cluster_token)
             output_token = input_attn(output_token, cluster_token)
+
+        # print(f'after cluster: {output_token.shape}')
 
         return output_token, output_shape
 
@@ -339,7 +345,12 @@ class TokenVisionTransformer(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'pos_embed', 'cls_token'}
+        skip_set = {'pos_embed', 'cls_token'}
+        for name, param in self.named_parameters():
+            if 'cluster_token' in name:
+                skip_set.add(name)
+        print(f'no weight decay: {skip_set}')
+        return skip_set
 
     def get_classifier(self):
         return self.head
