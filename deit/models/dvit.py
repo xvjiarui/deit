@@ -194,11 +194,14 @@ class AttnStage(nn.Module):
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0.,
                  norm_layer=nn.LayerNorm, out_dim=None,
-                 downsample=None):
+                 downsample=None, attn_pool='conv'):
         super().__init__()
         self.cluster_token = nn.Parameter(torch.zeros(1, num_cluster, dim))
         cluster_attn_blocks = []
         input_attn_blocks = []
+        attn_pools = []
+        output_convs = []
+        assert attn_pool in ['conv', 'max']
         for blk_idx in range(num_blocks):
             cluster_attn_blocks.append(
                 CrossAttnBlock(
@@ -217,44 +220,55 @@ class AttnStage(nn.Module):
                     drop_path=drop_path[blk_idx],
                     norm_layer=norm_layer,
                     out_dim=out_dim if blk_idx == num_blocks - 1 else None))
+            if attn_pool == 'conv':
+                attn_pools.append(
+                    nn.Conv2d(in_channels=dim, out_channels=dim, groups=dim,
+                              kernel_size=3, stride=2, padding=1)
+                )
+            else:
+                attn_pools.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+            conv_dim = dim if blk_idx < num_blocks - 1 or out_dim is None else out_dim
+            output_convs.append(
+                nn.Conv2d(in_channels=conv_dim, out_channels=conv_dim, groups=conv_dim,
+                          kernel_size=3, stride=1, padding=1))
         self.cluster_attn_blocks = nn.ModuleList(cluster_attn_blocks)
         self.input_attn_blocks = nn.ModuleList(input_attn_blocks)
+        self.attn_pools = nn.ModuleList(attn_pools)
+        self.output_convs = nn.ModuleList(output_convs)
         trunc_normal_(self.cluster_token, std=.02)
         self.downsample = downsample
 
-    def forward(self, x, x_shape):
+    def forward(self, x):
         # print(f'input: {x.shape}, {x_shape}')
-        B, _, H, W = x_shape
-        input_token = x
+        output_token = x
         cluster_token = self.cluster_token.expand(x.size(0), -1, -1)
-
-        cls_token = input_token[:, 0].unsqueeze(1)
-        output_token = rearrange(input_token[:, 1:], 'b (h w) c -> b c h w',
-                                 h=H, w=W, b=B)
 
         if self.downsample is not None:
             output_token = self.downsample(output_token)
+        B, _, H, W = output_token.shape
         # print(f'downsample: {output_token.shape}')
 
-        output_shape = output_token.shape
-        output_token = rearrange(output_token, 'b c h w -> b (h w) c')
-        output_token = torch.cat((cls_token, output_token), dim=1)
         # print(f'before cluster: {output_token.shape}, {output_shape}')
 
-        for cluster_attn, input_attn in zip(self.cluster_attn_blocks,
-                                            self.input_attn_blocks):
+        for cluster_attn, input_attn, attn_pool, output_conv in zip(
+                self.cluster_attn_blocks,
+                self.input_attn_blocks,
+                self.attn_pools,
+                self.output_convs):
             assert isinstance(cluster_attn, CrossAttnBlock)
             assert isinstance(input_attn, CrossAttnBlock)
-            cluster_token = cluster_attn(cluster_token, torch.cat((cluster_token, output_token), dim=1))
+            cluster_token = cluster_attn(
+                cluster_token,
+                torch.cat((cluster_token,
+                           rearrange(attn_pool(output_token), 'b c h w -> b (h w) c')), dim=1))
+            output_token = rearrange(output_token, 'b c h w -> b (h w) c', h=H, w=W)
             output_token = input_attn(output_token, cluster_token)
-
-        # for input_attn in self.input_attn_blocks:
-        #     assert isinstance(input_attn, CrossAttnBlock)
-        #     output_token = input_attn(output_token, output_token)
+            output_token = rearrange(output_token, 'b (h w) c -> b c h w', h=H, w=W)
+            output_token = output_conv(output_token)
 
         # print(f'after cluster: {output_token.shape}')
 
-        return output_token, output_shape
+        return output_token
 
 class PatchEmbed(nn.Module):
     """ Image to Patch Embedding
@@ -308,18 +322,10 @@ class TokenVisionTransformer(nn.Module):
         self.patch_embed = PatchEmbed(
             img_size=img_size, in_chans=in_chans,
             embed_dim=base_dim)
-        # strides = (1, )
-        # base_dim = 384
-        # self.stage_dims = (base_dim, )
-        # stage_blocks = (12,)
-        # self.patch_embed = PatchEmbed(
-        #     img_size=img_size, in_chans=in_chans,
-        #     embed_dim=base_dim, kernel_size=16, stride=16, padding=0)
         num_patches = self.patch_embed.num_patches
 
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, base_dim))
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, num_patches + 1, base_dim))
+            torch.zeros(1, num_patches, base_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, self.depth)]  # stochastic depth decay rule
@@ -366,7 +372,6 @@ class TokenVisionTransformer(nn.Module):
                               num_classes) if num_classes > 0 else nn.Identity()
 
         trunc_normal_(self.pos_embed, std=.02)
-        trunc_normal_(self.cls_token, std=.02)
         self.apply(self._init_weights)
         self.default_cfg = _cfg()
 
@@ -406,20 +411,16 @@ class TokenVisionTransformer(nn.Module):
         x = self.patch_embed(x)
 
         B, C, H, W = x.shape
-        x_shape = x.shape
-        x = rearrange(x, 'b c h w -> b (h w) c', b=B, h=H, w=W, c=C)
-        cls_tokens = self.cls_token.expand(B, -1,
-                                           -1)  # stole cls_tokens impl from Phil Wang, thanks
-        x = torch.cat((cls_tokens, x), dim=1)
+        x = rearrange(x, 'b c h w -> b (h w) c', h=H, w=W)
         x = x + self.pos_embed
         x = self.pos_drop(x)
+        x = rearrange(x, 'b (h w) c -> b c h w', h=H, w=W)
 
         for stage_idx, stage_block in enumerate(self.stages):
-            x, x_shape = stage_block(x, x_shape)
+            x = stage_block(x)
 
-
-        x = self.norm(x)
-        return x[:, 0]
+        x = self.norm(rearrange(x, 'b c h w -> b (h w) c'))
+        return F.adaptive_avg_pool1d(x.transpose(1, 2), 1).squeeze(2)
 
     def forward(self, x):
         x = self.forward_features(x)
