@@ -8,6 +8,6 @@ model_cfg:
     drop_path_rate: 0.1
 #    pool_type: token
     downsample_type: merge
-    merge_type: swin
-batch_size: 64
+    merge_type: conv
+batch_size: 128
 clip_grad: 5

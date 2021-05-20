@@ -311,11 +311,12 @@ class SwinAttnBlock(SwinTransformerBlock):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm, with_mlp=True):
-        super().__init__(dim=dim, input_resolution=input_resolution,
+        super().__init__(dim=dim,
                          num_heads=num_heads, window_size=window_size,
                          shift_size=shift_size, mlp_ratio=mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale, drop=drop,
                          attn_drop=attn_drop, drop_path=drop_path, act_layer=act_layer, norm_layer=norm_layer)
+        self.input_resolution = input_resolution
         self.with_mlp = with_mlp
         if not self.with_mlp:
             delattr(self, 'mlp')
@@ -324,7 +325,7 @@ class SwinAttnBlock(SwinTransformerBlock):
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
-    def forward(self, x, attn):
+    def forward(self, x, attn, mask_matrix):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
@@ -333,11 +334,20 @@ class SwinAttnBlock(SwinTransformerBlock):
         x = self.norm1(x)
         x = x.view(B, H, W, C)
 
+        # pad feature maps to multiples of window size
+        pad_l = pad_t = 0
+        pad_r = (self.window_size - W % self.window_size) % self.window_size
+        pad_b = (self.window_size - H % self.window_size) % self.window_size
+        x = F.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+        _, Hp, Wp, _ = x.shape
+
         # cyclic shift
         if self.shift_size > 0:
             shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            attn_mask = mask_matrix
         else:
             shifted_x = x
+            attn_mask = None
 
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
@@ -345,6 +355,7 @@ class SwinAttnBlock(SwinTransformerBlock):
 
         # [B * head, H, W, C]
         attn = rearrange(attn, 'b head (h w) c -> (b head) h w c', h=H, w=W)
+        attn = F.pad(attn, (0, 0, pad_l, pad_r, pad_t, pad_b))
         # cyclic shift
         if self.shift_size > 0:
             shifted_attn = torch.roll(attn, shifts=(
@@ -358,20 +369,24 @@ class SwinAttnBlock(SwinTransformerBlock):
             rearrange(attn_windows, 'b wh ww c -> b (wh ww) c', wh=self.window_size, ww=self.window_size))
         attn_windows = rearrange(attn_windows, '(b head nw) w c -> (b nw) head w c',
                                  b=B, head=self.num_heads,
-                                 nw=(H // self.window_size) * (W // self.window_size))
+                                 nw=(Hp // self.window_size) * (Wp // self.window_size))
 
         # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, attn=attn_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        attn_windows = self.attn(x_windows, attn=attn_windows, mask=attn_mask)  # nW*B, window_size*window_size, C
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
-        shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+        shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # B H' W' C
 
         # reverse cyclic shift
         if self.shift_size > 0:
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
+
+        if pad_r > 0 or pad_b > 0:
+            x = x[:, :H, :W, :].contiguous()
+
         x = x.view(B, H * W, C)
 
         # FFN
@@ -382,7 +397,7 @@ class SwinAttnBlock(SwinTransformerBlock):
         return x
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
+        return f"dim={self.dim}, num_heads={self.num_heads}, " \
                f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
 
 
@@ -392,7 +407,7 @@ class AttnStage(nn.Module):
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0.,
                  norm_layer=nn.LayerNorm, out_dim=None,
-                 downsample=None, attn_pool_type='conv', merge_type='conv', with_cp=True):
+                 downsample=None, attn_pool_type='conv', merge_type='conv', window_size=3):
         super().__init__()
         self.cluster_token = nn.Parameter(torch.zeros(1, num_cluster, dim))
         cluster_attn_blocks = []
@@ -401,7 +416,8 @@ class AttnStage(nn.Module):
         merge_blocks = []
         assert attn_pool_type in ['conv', 'max']
         assert merge_type in ['conv', 'swin']
-        self.with_cp = with_cp
+        self.window_size = window_size
+        self.shift_size = window_size // 2
         for blk_idx in range(num_blocks):
             cluster_attn_blocks.append(
                 CrossAttnBlock(
@@ -432,13 +448,13 @@ class AttnStage(nn.Module):
             if merge_type == 'conv':
                 merge_blocks.append(
                     nn.Conv2d(in_channels=merge_dim, out_channels=merge_dim, groups=merge_dim,
-                              kernel_size=3, stride=1, padding=1))
+                              kernel_size=window_size, stride=1, padding=window_size // 2))
             else:
                 merge_blocks.append(
                     SwinAttnBlock(dim=merge_dim,
                                   input_resolution=input_resolution,
-                                  num_heads=num_heads, window_size=7,
-                                  shift_size=0 if (blk_idx % 2 == 0) else 3,
+                                  num_heads=num_heads, window_size=window_size,
+                                  shift_size=0 if (blk_idx % 2 == 0) else window_size // 2,
                                   mlp_ratio=mlp_ratio,
                                   qkv_bias=qkv_bias, qk_scale=qk_scale,
                                   drop=drop_rate, attn_drop=attn_drop_rate,
@@ -475,7 +491,32 @@ class AttnStage(nn.Module):
             output_token = rearrange(output_token, 'b c h w -> b (h w) c', h=H, w=W)
             output_token, log_attn = input_attn(output_token, cluster_token, return_attn=True)
             if isinstance(merge, SwinAttnBlock):
-               output_token = merge(output_token, log_attn)
+                Hp = int(np.ceil(H / self.window_size)) * self.window_size
+                Wp = int(np.ceil(W / self.window_size)) * self.window_size
+                img_mask = torch.zeros((1, Hp, Wp, 1),
+                                       device=x.device)  # 1 Hp Wp 1
+                h_slices = (slice(0, -self.window_size),
+                            slice(-self.window_size, -self.shift_size),
+                            slice(-self.shift_size, None))
+                w_slices = (slice(0, -self.window_size),
+                            slice(-self.window_size, -self.shift_size),
+                            slice(-self.shift_size, None))
+                cnt = 0
+                for h in h_slices:
+                    for w in w_slices:
+                        img_mask[:, h, w, :] = cnt
+                        cnt += 1
+
+                mask_windows = window_partition(img_mask,
+                                                self.window_size)  # nW, window_size, window_size, 1
+                mask_windows = mask_windows.view(-1,
+                                                 self.window_size * self.window_size)
+                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(
+                    2)
+                attn_mask = attn_mask.masked_fill(attn_mask != 0,
+                                                  float(-100.0)).masked_fill(
+                    attn_mask == 0, float(0.0))
+                output_token = merge(output_token, log_attn, attn_mask)
             output_token = rearrange(output_token, 'b (h w) c -> b c h w', h=H, w=W)
             if isinstance(merge, nn.Conv2d):
                 output_token = merge(output_token)
@@ -525,6 +566,7 @@ class TokenVisionTransformer(nn.Module):
 
     def __init__(self, img_size=224, in_chans=3,
                  num_classes=1000, base_dim=96, downsample_type='max', merge_type='conv',
+                 window_size=3,
                  stage_blocks=(1, 2, 11, 2),
                  cluster_tokens=(64, 32, 16, 8),
                  mlp_ratio=4., qkv_bias=True, qk_scale=None,
@@ -585,7 +627,8 @@ class TokenVisionTransformer(nn.Module):
                                     drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
                                     norm_layer=norm_layer, out_dim=out_dim if downsample_type not in ['merge', 'conv'] else None,
                                     downsample=downsample,
-                                    merge_type=merge_type)
+                                    merge_type=merge_type,
+                                    window_size=window_size)
             stages.append(stage_block)
         self.stages = nn.ModuleList(stages)
 
