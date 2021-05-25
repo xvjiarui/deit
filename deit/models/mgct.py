@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+import torch.utils.checkpoint as cp
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import trunc_normal_, DropPath, to_2tuple
@@ -74,7 +75,7 @@ class Attention(nn.Module):
 
 class GlobalContext(nn.Module):
 
-    def __init__(self, dim, qk_dim=32, num_heads=8, context_drop=0., proj_drop=0., tau=1.):
+    def __init__(self, dim, qk_dim=32, num_heads=8, context_drop=0., proj_drop=0., with_cp=False):
         super(GlobalContext, self).__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -89,33 +90,40 @@ class GlobalContext(nn.Module):
         self.context_drop = nn.Dropout(context_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.with_cp = with_cp
 
     def forward(self, query, key=None):
-        x = query
-        if key is None:
-            key = x
-        batch, q_length, dim = x.shape
-        k_length = key.size(1)
-        # # [batch, length, dim]
-        q = self.q_proj(query)
-        k = self.k_proj(key)
-        v = self.v_proj(key)
-        # [batch, num_heads, q_length, qk_dim//num_heads]
-        q = q.reshape(batch, q_length, self.num_heads, self.qk_dim//self.num_heads).transpose(1, 2)
-        # [batch, num_heads, k_length, qk_dim//num_heads]
-        k = k.reshape(batch, k_length, self.num_heads, self.qk_dim//self.num_heads).transpose(1, 2)
-        # [batch, num_heads, k_length, dim//num_heads]
-        v = v.reshape(batch, k_length, self.num_heads, dim//self.num_heads).transpose(1, 2)
-        # [batch, num_heads, k_length, qk_dim//num_heads]
-        context_map = F.softmax(k/self.tau_k, dim=2)
-        # [batch, num_heads, qk_dim//num_heads, dim//num_heads]
-        context_value = context_map.transpose(-2, -1) @ v
-        # [batch, num_heads, q_length, dim//num_heads]
-        context_query = F.softmax(q/self.tau_q, dim=3)@ context_value
-        # [batch, num_heads, q_length, dim//num_heads]
-        context_query = context_query.transpose(1, 2).reshape(batch, q_length, dim)
-        x = self.proj(context_query)
-        x = self.proj_drop(x)
+        def _inner_forward(query, key):
+            x = query
+            if key is None:
+                key = x
+            batch, q_length, dim = x.shape
+            k_length = key.size(1)
+            # # [batch, length, dim]
+            q = self.q_proj(query)
+            k = self.k_proj(key)
+            v = self.v_proj(key)
+            # [batch, num_heads, q_length, qk_dim//num_heads]
+            q = q.reshape(batch, q_length, self.num_heads, self.qk_dim//self.num_heads).transpose(1, 2)
+            # [batch, num_heads, k_length, qk_dim//num_heads]
+            k = k.reshape(batch, k_length, self.num_heads, self.qk_dim//self.num_heads).transpose(1, 2)
+            # [batch, num_heads, k_length, dim//num_heads]
+            v = v.reshape(batch, k_length, self.num_heads, dim//self.num_heads).transpose(1, 2)
+            # [batch, num_heads, k_length, qk_dim//num_heads]
+            context_map = F.softmax(k/self.tau_k, dim=2)
+            # [batch, num_heads, qk_dim//num_heads, dim//num_heads]
+            context_value = context_map.transpose(-2, -1) @ v
+            # [batch, num_heads, q_length, dim//num_heads]
+            context_query = F.softmax(q/self.tau_q, dim=3)@ context_value
+            # [batch, num_heads, q_length, dim//num_heads]
+            context_query = context_query.transpose(1, 2).reshape(batch, q_length, dim)
+            x = self.proj(context_query)
+            x = self.proj_drop(x)
+            return x
+        if self.with_cp and query.requires_grad:
+            x = cp.checkpoint(_inner_forward, query, key)
+        else:
+            x = _inner_forward(query, key)
 
         return x
 
