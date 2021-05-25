@@ -79,7 +79,8 @@ class GlobalContext(nn.Module):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.qk_dim = qk_dim
-        self.tau = nn.Parameter(torch.ones(qk_dim))
+        self.tau_k = nn.Parameter(torch.ones(1, self.num_heads, 1, self.qk_dim//self.num_heads))
+        self.tau_q = nn.Parameter(torch.ones(1, self.num_heads, 1, self.qk_dim//self.num_heads))
 
         # self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.q_proj = nn.Linear(dim, qk_dim, bias=True)
@@ -106,12 +107,11 @@ class GlobalContext(nn.Module):
         # [batch, num_heads, k_length, dim//num_heads]
         v = v.reshape(batch, k_length, self.num_heads, dim//self.num_heads).transpose(1, 2)
         # [batch, num_heads, k_length, qk_dim//num_heads]
-        tau = self.tau.reshape(1, self.num_heads, 1, self.qk_dim//self.num_heads)
-        context_map = F.softmax(k/tau, dim=2)
+        context_map = F.softmax(k/self.tau_k, dim=2)
         # [batch, num_heads, qk_dim//num_heads, dim//num_heads]
         context_value = context_map.transpose(-2, -1) @ v
         # [batch, num_heads, q_length, dim//num_heads]
-        context_query = q @ context_value
+        context_query = F.softmax(q/self.tau_q, dim=3)@ context_value
         # [batch, num_heads, q_length, dim//num_heads]
         context_query = context_query.transpose(1, 2).reshape(batch, q_length, dim)
         x = self.proj(context_query)
