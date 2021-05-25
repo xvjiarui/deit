@@ -79,7 +79,7 @@ class GlobalContext(nn.Module):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.qk_dim = qk_dim
-        self.tau = tau
+        self.tau = nn.Parameter(torch.ones(qk_dim))
 
         # self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.q_proj = nn.Linear(dim, qk_dim, bias=True)
@@ -106,7 +106,8 @@ class GlobalContext(nn.Module):
         # [batch, num_heads, k_length, dim//num_heads]
         v = v.reshape(batch, k_length, self.num_heads, dim//self.num_heads).transpose(1, 2)
         # [batch, num_heads, k_length, qk_dim//num_heads]
-        context_map = F.softmax(k/self.tau, dim=2)
+        tau = self.tau.reshape(1, self.num_heads, 1, self.qk_dim//self.num_heads)
+        context_map = F.softmax(k/tau, dim=2)
         # [batch, num_heads, qk_dim//num_heads, dim//num_heads]
         context_value = context_map.transpose(-2, -1) @ v
         # [batch, num_heads, q_length, dim//num_heads]
@@ -267,7 +268,6 @@ class MultiscaleGlobalContextTransformer(nn.Module):
                  num_classes=1000, base_dim=96, downsample_type='max',
                  stage_blocks=(1, 2, 11, 2),
                  mlp_ratio=4.,
-                 qk_dim=48,
                  drop_rate=0.,
                  drop_path_rate=0.,
                  norm_layer=nn.LayerNorm,
