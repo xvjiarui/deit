@@ -75,7 +75,7 @@ class Attention(nn.Module):
 
 class GlobalContext(nn.Module):
 
-    def __init__(self, dim, qk_dim=32, num_heads=8, context_drop=0., proj_drop=0., with_cp=False):
+    def __init__(self, dim, qk_dim=32, num_heads=8, context_drop=0., proj_drop=0., tau=1., with_cp=False):
         super(GlobalContext, self).__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
