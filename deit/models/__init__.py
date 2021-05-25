@@ -5,3 +5,4 @@ from .mvit import MultiscaleVisionTransformer
 from .rmvit import RecurrentMultiscaleVisionTransformer
 # from .cmvit import ClusterMultiscaleVisionTransformer
 from .dvit import TokenVisionTransformer
+from .mgct import MultiscaleGlobalContextTransformer

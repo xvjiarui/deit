@@ -1,0 +1,12 @@
+VERSION: 2
+model_cfg:
+  type: MultiscaleGlobalContextTransformer
+  kwargs:
+    base_dim: 96
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+#    pool_type: token
+    downsample_type: merge
+batch_size: 256
+clip_grad: 5
