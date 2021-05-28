@@ -1,0 +1,14 @@
+VERSION: 2
+model_cfg:
+  type: TokenVisionTransformer
+  kwargs:
+    base_dim: 96
+    num_classes: 1000
+    drop_rate: 0.
+    drop_path_rate: 0.1
+#    pool_type: token
+    downsample_type: merge
+    merge_type: group
+    window_size: 5
+batch_size: 128
+clip_grad: 5

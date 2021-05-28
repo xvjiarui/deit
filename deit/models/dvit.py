@@ -77,7 +77,7 @@ class Attention(nn.Module):
 
         # [B, nh, N, S]
         attn = (q @ k.transpose(-2, -1)) * self.scale
-        log_attn = attn
+        log_attn = F.log_softmax(attn, dim=-1)
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
         assert attn.shape == (B, self.num_heads, N, S)
@@ -227,12 +227,24 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 def pairwise_jsd(input, target=None):
+    """
+    Args:
+        input: (B, N, C), log space
+    """
     if target is None:
         target = input
+    # [B, N, 1, C]
     input = input.unsqueeze(2)
+    # [B, 1, N, C]
     target = target.unsqueeze(1)
-    pair_result = torch.sum(input.softmax(dim=-1)*(input - target) + target.softmax(dim=-1)*(target - input), dim=-1)
-    pair_result = F.normalize(pair_result, p=1, dim=-1)
+    # [B, N, N, C]
+    mid = 0.5 * (input.exp() + target.exp())
+    # [B, N, N, C]
+    mid = (mid + 1e-12).log()
+    # [B, N, N]
+    pair_result = 0.5 * (torch.sum(input.exp()*(input - mid) + target.exp()*(target - mid), dim=-1))
+    pair_result = 1 - F.normalize(pair_result, p=1, dim=-1)
+    pair_result = pair_result / torch.sum(pair_result, dim=-1, keepdim=True)
     return pair_result
 
 
@@ -288,6 +300,38 @@ class WindowAggregation(WindowAttention):
 
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
+
+class PointAggregation(nn.Module):
+    def __init__(self, dim, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.):
+        super(PointAggregation, self).__init__()
+        self.v_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.num_heads = num_heads
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, query, key, attn):
+        """
+        Args:
+            query: [B, N, C]
+            key: [B, M, C]
+            attn: [B, H, N, M], H: num_heads
+        """
+        B, N, C = query.shape
+        M = key.size(1)
+        v = rearrange(self.v_proj(key), 'b n (h c)-> b h n c', h=self.num_heads,
+                      b=B, c=C // self.num_heads)
+
+        attn = self.attn_drop(attn)
+        assert attn.shape == (B, self.num_heads, N, M)
+
+        # [B, nh, N, C//nh] -> [B, N, C]
+        out = rearrange(attn @ v, 'b h n c -> b n (h c)', h=self.num_heads, b=B, n=N, c=C//self.num_heads)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+
+        return out
+
 
 
 class SwinAttnBlock(SwinTransformerBlock):
@@ -400,6 +444,65 @@ class SwinAttnBlock(SwinTransformerBlock):
         return f"dim={self.dim}, num_heads={self.num_heads}, " \
                f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
 
+class GroupAttn(nn.Module):
+
+    def __init__(self, dim, num_heads,
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0.,
+                 attn_drop=0., drop_path=0.,
+                 norm_layer=nn.LayerNorm, with_mlp=True,
+                 radius=3, num_points=8):
+        super(GroupAttn, self).__init__()
+        self.radius = radius
+        self.num_points = num_points
+        from deit.ops import QueryAndGroup
+        self.group = QueryAndGroup(max_radius=radius, sample_num=num_points, use_xyz=False)
+        self.aggregate = PointAggregation(dim=dim, num_heads=num_heads,
+                                          qkv_bias=qkv_bias,
+                                          attn_drop=attn_drop, proj_drop=drop)
+        self.num_heads = num_heads
+
+    def forward(self, x, attn):
+        """
+        Args:
+            x: [B, C, H, W]
+            attn: [B, nH, H*W, T]
+        """
+        B, C, H, W = x.shape
+        x = rearrange(x, 'b c h w -> b c (h w)')
+        attn = rearrange(attn, 'b head hw T -> b (head T) hw', head=self.num_heads, hw=H*W)
+        coords_h = torch.arange(H, device=x.device)
+        coords_w = torch.arange(W, device=x.device)
+        # [2, H, W]
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))
+        # [2, H*W]
+        coords_flatten = torch.flatten(coords, 1)
+        # [3, H*W]
+        coords_flatten = torch.cat(
+            [coords_flatten, torch.ones(1, H*W, device=x.device)],
+            dim=0)
+        # [B, H*W, 3]
+        coords_flatten = repeat(coords_flatten, 'c hw -> b hw c', b=B, c=3)
+        # [B, C, H*W, N]
+        grouped_x, grouped_attn = self.group(coords_flatten, coords_flatten, (x.contiguous(), attn.contiguous()))
+        # [B*H*W, N, C]
+        grouped_x = rearrange(grouped_x, 'b c hw n -> (b hw) n c', hw=H*W, n=self.num_points, b=B, c=C)
+        # [B*H*W*nH, N, T]
+        grouped_attn = rearrange(grouped_attn,
+                                 'b (head T) hw n -> (b hw head) n T', hw=H * W,
+                                 n=self.num_points, head=self.num_heads, b=B)
+        attn = rearrange(attn, 'b (head T) hw -> (b hw head) 1 T', hw=H*W, head=self.num_heads)
+        # [B*H*W*nH, 1, N]
+        pair_attn = pairwise_jsd(attn, grouped_attn)
+        pair_attn = rearrange(pair_attn, '(b hw head) s l -> (b hw) head s l', b=B, hw=H*W, head=self.num_heads)
+        # [B*H*W, 1, C]
+        x = rearrange(x, 'b c hw -> (b hw) 1 c', hw=H*W, b=B, c=C)
+        # [B*H*W, 1, C]
+        x = self.aggregate(x, grouped_x, pair_attn)
+        x = rearrange(x, '(b h w) 1 c -> b c h w', h=H, w=W, b=B, c=C)
+
+        return x
+
+
 
 class AttnStage(nn.Module):
 
@@ -415,7 +518,7 @@ class AttnStage(nn.Module):
         attn_pools = []
         merge_blocks = []
         assert attn_pool_type in ['conv', 'max']
-        assert merge_type in ['conv', 'swin']
+        assert merge_type in ['conv', 'swin', 'group']
         self.window_size = window_size
         self.shift_size = window_size // 2
         for blk_idx in range(num_blocks):
@@ -449,6 +552,14 @@ class AttnStage(nn.Module):
                 merge_blocks.append(
                     nn.Conv2d(in_channels=merge_dim, out_channels=merge_dim, groups=merge_dim,
                               kernel_size=window_size, stride=1, padding=window_size // 2))
+            elif merge_type == 'group':
+                merge_blocks.append(
+                    GroupAttn(dim=merge_dim, num_heads=num_heads,
+                              mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
+                              qk_scale=qk_scale, drop=drop_rate,
+                              attn_drop=attn_drop_rate,
+                              drop_path=drop_path[blk_idx],
+                              norm_layer=norm_layer, with_mlp=False))
             else:
                 merge_blocks.append(
                     SwinAttnBlock(dim=merge_dim,
@@ -520,6 +631,8 @@ class AttnStage(nn.Module):
             output_token = rearrange(output_token, 'b (h w) c -> b c h w', h=H, w=W)
             if isinstance(merge, nn.Conv2d):
                 output_token = merge(output_token)
+            elif isinstance(merge, GroupAttn):
+                output_token = merge(output_token, log_attn)
 
         # print(f'after cluster: {output_token.shape}')
         if self.downsample is not None:
